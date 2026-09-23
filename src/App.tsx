@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import SignaturePad from '@/SignaturePad';
 
 type RequestType = 'payment_voucher' | 'memorandum';
 type Status = 'pending' | 'checked' | 'approved' | 'rejected' | 'paid';
@@ -57,6 +58,9 @@ type ApprovalRequest = {
   paid_by: string | null;
   paid_by_name: string | null;
   paid_at: string | null;
+  checked_signature: string | null;
+  approved_signature: string | null;
+  paid_signature: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -139,6 +143,7 @@ function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [seenRequestIds, setSeenRequestIds] = useState<Set<string>>(new Set());
   const [newRequestIds, setNewRequestIds] = useState<Set<string>>(new Set());
+  const [pendingAction, setPendingAction] = useState<{ request: ApprovalRequest; action: 'check' | 'approve' | 'pay' } | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -245,13 +250,13 @@ function App() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const advanceStatus = async (request: ApprovalRequest, action: 'check' | 'approve' | 'pay' | 'reject') => {
+  const advanceStatus = async (request: ApprovalRequest, action: 'check' | 'approve' | 'pay' | 'reject', signature?: string) => {
     if (!supabase || !profile) return;
     const now = new Date().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };
-    if (action === 'check') { updates.status = 'checked'; updates.checked_by = profile.id; updates.checked_by_name = profile.full_name; updates.checked_at = now; }
-    if (action === 'approve') { updates.status = 'approved'; updates.approved_by = profile.id; updates.approved_by_name = profile.full_name; updates.approved_at = now; }
-    if (action === 'pay') { updates.status = 'paid'; updates.paid_by = profile.id; updates.paid_by_name = profile.full_name; updates.paid_at = now; }
+    if (action === 'check') { updates.status = 'checked'; updates.checked_by = profile.id; updates.checked_by_name = profile.full_name; updates.checked_at = now; if (signature) updates.checked_signature = signature; }
+    if (action === 'approve') { updates.status = 'approved'; updates.approved_by = profile.id; updates.approved_by_name = profile.full_name; updates.approved_at = now; if (signature) updates.approved_signature = signature; }
+    if (action === 'pay') { updates.status = 'paid'; updates.paid_by = profile.id; updates.paid_by_name = profile.full_name; updates.paid_at = now; if (signature) updates.paid_signature = signature; }
     if (action === 'reject') { updates.status = 'rejected'; updates.approved_by = profile.id; updates.approved_by_name = profile.full_name; updates.approved_at = now; }
     const { error: updateError } = await supabase.from('approval_requests').update(updates).eq('id', request.id);
     if (updateError) { setError('We could not update that request.'); return; }
@@ -480,24 +485,24 @@ function App() {
               <span className="chain-title">Approval trail</span>
               <div className={`trail-step ${selectedRequest.checked_at ? 'done' : ''}`}>
                 <span className="trail-icon">{selectedRequest.checked_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div><strong>Checked by Auditor</strong>{selectedRequest.checked_by_name ? <span>{selectedRequest.checked_by_name} · {formatDate(selectedRequest.checked_at!)}</span> : <span className="muted">Awaiting check</span>}</div>
+                <div className="trail-content"><strong>Checked by Auditor</strong>{selectedRequest.checked_by_name ? <span>{selectedRequest.checked_by_name} · {formatDate(selectedRequest.checked_at!)}</span> : <span className="muted">Awaiting check</span>}{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Auditor signature" className="trail-signature" />}</div>
               </div>
               <div className={`trail-step ${selectedRequest.approved_at ? 'done' : selectedRequest.status === 'rejected' ? 'rejected' : ''}`}>
                 <span className="trail-icon">{selectedRequest.approved_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div><strong>{selectedRequest.status === 'rejected' ? 'Rejected' : 'Approved by MD / GM'}</strong>{selectedRequest.approved_by_name ? <span>{selectedRequest.approved_by_name} · {formatDate(selectedRequest.approved_at!)}</span> : <span className="muted">Awaiting approval</span>}</div>
+                <div className="trail-content"><strong>{selectedRequest.status === 'rejected' ? 'Rejected' : 'Approved by MD / GM'}</strong>{selectedRequest.approved_by_name ? <span>{selectedRequest.approved_by_name} · {formatDate(selectedRequest.approved_at!)}</span> : <span className="muted">Awaiting approval</span>}{selectedRequest.approved_signature && <img src={selectedRequest.approved_signature} alt="Approver signature" className="trail-signature" />}</div>
               </div>
               <div className={`trail-step ${selectedRequest.paid_at ? 'done' : ''}`}>
                 <span className="trail-icon">{selectedRequest.paid_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div><strong>Paid by Accountant</strong>{selectedRequest.paid_by_name ? <span>{selectedRequest.paid_by_name} · {formatDate(selectedRequest.paid_at!)}</span> : <span className="muted">Awaiting payment</span>}</div>
+                <div className="trail-content"><strong>Paid by Accountant</strong>{selectedRequest.paid_by_name ? <span>{selectedRequest.paid_by_name} · {formatDate(selectedRequest.paid_at!)}</span> : <span className="muted">Awaiting payment</span>}{selectedRequest.paid_signature && <img src={selectedRequest.paid_signature} alt="Accountant signature" className="trail-signature" />}</div>
               </div>
             </div>
 
             <div className="detail-actions">
               <button className="secondary-button" onClick={() => setSelectedRequest(null)}>Close</button>
-              {selectedRequest.status === 'pending' && canCheck(role) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'check')}><Check size={15} /> Mark as checked</button>}
-              {canApproveAt(role, selectedRequest.status) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'approve')}><Check size={15} /> Approve</button>}
+              {selectedRequest.status === 'pending' && canCheck(role) && <button className="secondary-button approve-button" onClick={() => setPendingAction({ request: selectedRequest, action: 'check' })}><Check size={15} /> Mark as checked</button>}
+              {canApproveAt(role, selectedRequest.status) && <button className="secondary-button approve-button" onClick={() => setPendingAction({ request: selectedRequest, action: 'approve' })}><Check size={15} /> Approve</button>}
               {(selectedRequest.status === 'pending' || selectedRequest.status === 'checked') && canReject(role) && <button className="secondary-button reject-button" onClick={() => void advanceStatus(selectedRequest, 'reject')}><X size={15} /> Reject</button>}
-              {selectedRequest.status === 'approved' && canPay(role) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'pay')}><Check size={15} /> Mark as paid</button>}
+              {selectedRequest.status === 'approved' && canPay(role) && <button className="secondary-button approve-button" onClick={() => setPendingAction({ request: selectedRequest, action: 'pay' })}><Check size={15} /> Mark as paid</button>}
               <button className="primary-button" onClick={() => window.print()}><Printer size={16} /> Print {selectedRequest.request_type === 'memorandum' ? 'memorandum' : 'PV'}</button>
             </div>
           </div>
@@ -521,13 +526,25 @@ function App() {
             <div><span>Urgency</span><strong>{selectedRequest.urgency.toUpperCase()}</strong></div>
           </div>
           <div className="print-signatures">
-            <div>Prepared by: {selectedRequest.requested_by_name}<div className="signature-line" />Signature / Date</div>
-            <div>Checked by: {selectedRequest.checked_by_name ?? '____________'}<div className="signature-line" />Signature / Date</div>
-            <div>Approved by: {selectedRequest.approved_by_name ?? '____________'}<div className="signature-line" />Signature / Date</div>
+            <div>Prepared by: {selectedRequest.requested_by_name}<div className="signature-line" />Signature / Date{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Preparer signature" className="print-signature-img" />}</div>
+            <div>Checked by: {selectedRequest.checked_by_name ?? '____________'}<div className="signature-line" />Signature / Date{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Checker signature" className="print-signature-img" />}</div>
+            <div>Approved by: {selectedRequest.approved_by_name ?? '____________'}<div className="signature-line" />Signature / Date{selectedRequest.approved_signature && <img src={selectedRequest.approved_signature} alt="Approver signature" className="print-signature-img" />}</div>
           </div>
           {selectedRequest.paid_by_name && <div className="print-paid">Paid by {selectedRequest.paid_by_name} on {formatDate(selectedRequest.paid_at!)}</div>}
           <div className="print-footer">ALSALE · Banking Machines | Elevators | ACP · Official internal record</div>
         </div>
+      )}
+
+      {pendingAction && (
+        <SignaturePad
+          label={`Sign to ${pendingAction.action === 'check' ? 'confirm check' : pendingAction.action === 'approve' ? 'approve request' : 'confirm payment'}`}
+          onSave={(dataUrl) => {
+            const req = pendingAction.request;
+            setPendingAction(null);
+            void advanceStatus(req, pendingAction.action, dataUrl);
+          }}
+          onCancel={() => setPendingAction(null)}
+        />
       )}
 
       {showNewRequest && (
