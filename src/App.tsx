@@ -14,7 +14,6 @@ import {
   Plus,
   Printer,
   Search,
-  Settings,
   ShieldCheck,
   Sparkles,
   WalletCards,
@@ -145,19 +144,23 @@ function App() {
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
+    let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
       setSession(data.session as { user: { id: string; email: string } } | null);
       if (!data.session) setAuthLoading(false);
-    });
+    }).catch(() => { if (mounted) setAuthLoading(false); });
     supabase.auth.onAuthStateChange((_event, sessionState) => {
       (async () => {
         setSession(sessionState as { user: { id: string; email: string } } | null);
         if (!sessionState) { setProfile(null); setAuthLoading(false); return; }
         const { data: profileData } = await supabase!.from('profiles').select('*').eq('id', sessionState.user.id).maybeSingle();
+        if (!mounted) return;
         setProfile(profileData as Profile | null);
         setAuthLoading(false);
       })();
     });
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
@@ -337,9 +340,9 @@ function App() {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${showMobileNav ? 'sidebar-open' : ''}`}>
-        <div className="brand-lockup">
+        <button className="brand-lockup" onClick={() => { setActiveView('overview'); setShowMobileNav(false); }} style={{ border: 0, background: 'transparent', cursor: 'pointer', padding: 0 }}>
           <img src="/photo_2026-09-23_14-50-00.jpg" alt="ALSALE" className="company-logo" />
-        </div>
+        </button>
         <div className="workspace-label">WORKSPACE</div>
         <nav className="main-nav">
           <button className={`nav-item ${activeView === 'overview' ? 'active' : ''}`} onClick={() => { setActiveView('overview'); setShowMobileNav(false); }}><LayoutDashboard size={18} /> Overview</button>
@@ -393,8 +396,8 @@ function App() {
           <section className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 23 September 2026</p>
-              <h1>{activeView === 'overview' ? `Welcome back, ${firstName}` : 'All requests'}</h1>
-              <p className="heading-copy">{activeView === 'overview' ? `You are signed in as ${roleLabels[role]}. Here is what needs your attention.` : 'Review and manage every payment voucher and memorandum.'}</p>
+              <h1>{activeView === 'overview' ? `Welcome back, ${firstName}` : activeView === 'approved-pvs' ? 'Approved Payment Vouchers' : 'All requests'}</h1>
+              <p className="heading-copy">{activeView === 'overview' ? `You are signed in as ${roleLabels[role]}. Here is what needs your attention.` : activeView === 'approved-pvs' ? 'Payment vouchers that have been approved and are ready for payment.' : 'Review and manage every payment voucher and memorandum.'}</p>
             </div>
             <button className="primary-button" onClick={() => setShowNewRequest(true)}><Plus size={18} /> New request</button>
           </section>
