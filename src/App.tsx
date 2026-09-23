@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   Bell,
@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   Clock3,
   FileText,
+  CheckCircle2,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -125,7 +126,7 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
 
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
-  const [activeView, setActiveView] = useState<'overview' | 'requests'>('overview');
+  const [activeView, setActiveView] = useState<'overview' | 'requests' | 'approved-pvs'>('overview');
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [showMobileNav, setShowMobileNav] = useState(false);
   const [search, setSearch] = useState('');
@@ -135,6 +136,12 @@ function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<ApprovalRequest | null>(null);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [seenRequestIds, setSeenRequestIds] = useState<Set<string>>(new Set());
+  const [newRequestIds, setNewRequestIds] = useState<Set<string>>(new Set());
+  const notifRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return; }
@@ -157,9 +164,28 @@ function App() {
     if (!supabase || !session) return;
     const loadRequests = async () => {
       const { data } = await supabase!.from('approval_requests').select('*').order('created_at', { ascending: false });
-      if (data) setRequests(data as ApprovalRequest[]);
+      if (data) {
+        const loaded = data as ApprovalRequest[];
+        setRequests(loaded);
+        setSeenRequestIds((prev) => {
+          if (prev.size === 0) return new Set(loaded.map((r) => r.id));
+          return prev;
+        });
+      }
     };
     void loadRequests();
+    const channel = supabase!.channel('approval_requests_changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'approval_requests' }, (payload) => {
+        const newReq = payload.new as ApprovalRequest;
+        setRequests((current) => [newReq, ...current.filter((r) => r.id !== newReq.id)]);
+        setNewRequestIds((current) => new Set(current).add(newReq.id));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'approval_requests' }, (payload) => {
+        const updated = payload.new as ApprovalRequest;
+        setRequests((current) => current.map((r) => r.id === updated.id ? updated : r));
+      })
+      .subscribe();
+    return () => { supabase!.removeChannel(channel); };
   }, [session]);
 
   const handleAuth = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -203,6 +229,18 @@ function App() {
   const checkedCount = requests.filter((r) => r.status === 'checked').length;
   const approvedAmount = requests.filter((r) => r.status === 'approved').reduce((sum, r) => sum + r.amount, 0);
   const totalThisMonth = requests.reduce((sum, r) => sum + r.amount, 0);
+  const approvedPVs = useMemo(() => requests.filter((r) => r.request_type === 'payment_voucher' && r.status === 'approved'), [requests]);
+  const notificationList = useMemo(() => requests.filter((r) => newRequestIds.has(r.id)).slice(0, 8), [requests, newRequestIds]);
+  const unseenCount = notificationList.length;
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotifications(false);
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setShowProfileMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const advanceStatus = async (request: ApprovalRequest, action: 'check' | 'approve' | 'pay' | 'reject') => {
     if (!supabase || !profile) return;
@@ -318,10 +356,36 @@ function App() {
       <main className="main-content">
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setShowMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button>
-          <div className="breadcrumb"><span>ALSALE</span><span>/</span><strong>{activeView === 'overview' ? 'Overview' : 'All requests'}</strong></div>
+          <div className="breadcrumb"><span>ALSALE</span><span>/</span><strong>{activeView === 'overview' ? 'Overview' : activeView === 'approved-pvs' ? 'Approved PVs' : 'All requests'}</strong></div>
           <div className="topbar-actions">
-            <button className="icon-button notification" aria-label="Notifications"><Bell size={19} /><i /></button>
-            <div className="topbar-user"><div className="avatar small">{initials}</div><span>{firstName}</span><ChevronDown size={15} /></div>
+            <div className="dropdown-anchor" ref={notifRef}>
+              <button className={`icon-button notification ${showNotifications ? 'active' : ''}`} aria-label="Notifications" onClick={() => { setShowNotifications((v) => !v); setShowProfileMenu(false); }}><Bell size={19} />{unseenCount > 0 && <span className="notif-badge">{unseenCount}</span>}</button>
+              {showNotifications && (
+                <div className="dropdown-panel notif-panel">
+                  <div className="dropdown-header"><strong>Notifications</strong>{unseenCount > 0 && <button className="text-button" onClick={() => { setNewRequestIds(new Set()); setSeenRequestIds(new Set(requests.map((r) => r.id))); }}>Mark all read</button>}</div>
+                  {notificationList.length === 0 ? (
+                    <div className="dropdown-empty"><CheckCircle2 size={20} /><span>You are all caught up</span></div>
+                  ) : notificationList.map((req) => (
+                    <button key={req.id} className="notif-item" onClick={() => { setSelectedRequest(req); setShowNotifications(false); setNewRequestIds((current) => { const next = new Set(current); next.delete(req.id); return next; }); }}>
+                      <span className={`request-type ${req.request_type === 'memorandum' ? 'memo' : 'voucher'}`}>{req.request_type === 'memorandum' ? <FileText size={14} /> : <WalletCards size={14} />}</span>
+                      <div><strong>{req.request_number}</strong><span>{req.title}</span><small>New request by {req.requested_by_name}</small></div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="dropdown-anchor" ref={profileRef}>
+              <button className={`topbar-user ${showProfileMenu ? 'active' : ''}`} onClick={() => { setShowProfileMenu((v) => !v); setShowNotifications(false); }}><div className="avatar small">{initials}</div><span>{firstName}</span><ChevronDown size={15} /></button>
+              {showProfileMenu && (
+                <div className="dropdown-panel profile-panel">
+                  <div className="dropdown-profile-head"><div className="avatar">{initials}</div><div><strong>{profile?.full_name ?? 'User'}</strong><span>{roleLabels[role]}</span></div></div>
+                  <button className="dropdown-link" onClick={() => { setActiveView('approved-pvs'); setShowProfileMenu(false); setShowMobileNav(false); }}><CheckCircle2 size={17} /> Approved PVs <span className="dropdown-count">{approvedPVs.length}</span></button>
+                  <button className="dropdown-link" onClick={() => { setActiveView('requests'); setShowProfileMenu(false); setShowMobileNav(false); }}><ClipboardCheck size={17} /> All requests <span className="dropdown-count">{requests.length}</span></button>
+                  <div className="dropdown-divider" />
+                  <button className="dropdown-link danger" onClick={() => { void handleSignOut(); setShowProfileMenu(false); }}><LogOut size={17} /> Sign out</button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -335,7 +399,12 @@ function App() {
             <button className="primary-button" onClick={() => setShowNewRequest(true)}><Plus size={18} /> New request</button>
           </section>
 
-          {activeView === 'overview' ? (
+          {activeView === 'approved-pvs' ? (
+            <section className="panel requests-page">
+              <div className="panel-header"><div><h2>Approved Payment Vouchers</h2><p>Payment vouchers that have been approved and are ready for payment</p></div></div>
+              <RequestTable requests={approvedPVs} onOpen={setSelectedRequest} emptyMessage="No approved payment vouchers yet." />
+            </section>
+          ) : activeView === 'overview' ? (
             <>
               <section className="metric-grid">
                 <div className="metric-card accent-blue"><div className="metric-top"><span>Awaiting check</span><span className="metric-icon"><Clock3 size={18} /></span></div><strong>{pendingCount}</strong><small>New requests needing review</small></div>
@@ -365,7 +434,7 @@ function App() {
                 </div>
               </section>
             </>
-          ) : (
+          ) : activeView === 'requests' ? (
             <section className="panel requests-page">
               <div className="list-toolbar">
                 <div className="search-box"><Search size={18} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search requests..." /></div>
@@ -373,7 +442,7 @@ function App() {
               </div>
               <RequestTable requests={filteredRequests} onOpen={setSelectedRequest} emptyMessage="No requests match your search." />
             </section>
-          )}
+          ) : null}
         </div>
       </main>
 
