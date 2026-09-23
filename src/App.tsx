@@ -94,7 +94,7 @@ const roleOptions: { value: Role; label: string }[] = [
   { value: 'staff', label: 'Staff' },
 ];
 
-const initialForm: RequestForm = { requestType: 'payment_voucher', title: '', description: '', amount: '', requesterName: '', department: 'General Management', recipient: '', urgency: 'normal' };
+const initialForm: RequestForm = { requestType: 'payment_voucher', title: '', description: '', amount: '', requesterName: '', department: 'Elevator Department', recipient: '', urgency: 'normal' };
 
 function formatMoney(amount: number) {
   return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', minimumFractionDigits: 2 }).format(amount).replace('GHS', 'GHC');
@@ -111,6 +111,7 @@ function statusLabel(status: Status) {
 
 function canCheck(role: Role) { return role === 'auditor' || role === 'accountant' || role === 'madam_charity'; }
 function canApprove(role: Role) { return role === 'md' || role === 'accountant' || role === 'general_manager'; }
+function canApproveAt(role: Role, status: Status) { return canApprove(role) && (status === 'pending' || status === 'checked'); }
 function canPay(role: Role) { return role === 'accountant'; }
 function canReject(role: Role) { return role === 'md' || role === 'accountant' || role === 'madam_charity'; }
 
@@ -422,7 +423,7 @@ function App() {
             <div className="detail-actions">
               <button className="secondary-button" onClick={() => setSelectedRequest(null)}>Close</button>
               {selectedRequest.status === 'pending' && canCheck(role) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'check')}><Check size={15} /> Mark as checked</button>}
-              {selectedRequest.status === 'checked' && canApprove(role) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'approve')}><Check size={15} /> Approve</button>}
+              {canApproveAt(role, selectedRequest.status) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'approve')}><Check size={15} /> Approve</button>}
               {(selectedRequest.status === 'pending' || selectedRequest.status === 'checked') && canReject(role) && <button className="secondary-button reject-button" onClick={() => void advanceStatus(selectedRequest, 'reject')}><X size={15} /> Reject</button>}
               {selectedRequest.status === 'approved' && canPay(role) && <button className="secondary-button approve-button" onClick={() => void advanceStatus(selectedRequest, 'pay')}><Check size={15} /> Mark as paid</button>}
               <button className="primary-button" onClick={() => window.print()}><Printer size={16} /> Print {selectedRequest.request_type === 'memorandum' ? 'memorandum' : 'PV'}</button>
@@ -473,7 +474,7 @@ function App() {
                 <label className="full">Subject<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Payment for servicing of machines" /></label>
                 <label>Your name<input value={form.requesterName} onChange={(e) => setForm({ ...form, requesterName: e.target.value })} placeholder="So we know who is requesting this" /></label>
                 <label>Amount <span>(GHC)</span><input type="number" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0.00" /></label>
-                <label>Department<select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}><option>General Management</option><option>Accounts</option><option>Administration</option><option>Operations</option><option>People &amp; Culture</option></select></label>
+                <label>Department<select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })}><option>Elevator Department</option><option>IT Department</option><option>Sales Department</option><option>Aftersales Department</option><option>General Management</option></select></label>
                 <label>Send through to<input value={form.recipient} onChange={(e) => setForm({ ...form, recipient: e.target.value })} placeholder="e.g. Managing Director" /></label>
                 <label className="full">Details<textarea rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Explain what this request is for..." /></label>
                 <label className="full">Urgency<select value={form.urgency} onChange={(e) => setForm({ ...form, urgency: e.target.value as Urgency })}><option value="normal">Normal — within 3 working days</option><option value="urgent">Urgent — needs attention today</option><option value="emergency">Emergency — immediate attention</option></select></label>
