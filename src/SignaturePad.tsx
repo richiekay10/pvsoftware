@@ -21,7 +21,8 @@ export default function SignaturePad({ label, onSave, onCancel }: SignaturePadPr
     ctx.lineWidth = 2.2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#1a332f';
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    ctx.strokeStyle = isDark ? '#e0ece8' : '#1a332f';
   }, []);
 
   const getPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
