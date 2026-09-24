@@ -33,13 +33,26 @@ import SignaturePad from '@/SignaturePad';
 type RequestType = 'payment_voucher' | 'memorandum';
 type Status = 'pending' | 'checked' | 'accountant_checked' | 'approved' | 'rejected' | 'paid';
 type Urgency = 'normal' | 'urgent' | 'emergency';
-type Role = 'accountant' | 'md' | 'auditor' | 'general_manager' | 'madam_charity' | 'staff';
+type Role = 'accountant' | 'md' | 'auditor' | 'general_manager' | 'madam_charity' | 'sales_manager' | 'aftersales_manager' | 'staff';
 type PVCategory = 'general' | 'fuel' | 'electricity' | 'water' | 'rent' | 'transport' | 'maintenance' | 'supplies' | 'other';
 
 type Profile = {
   id: string;
   full_name: string;
   role: Role;
+};
+
+type Notification = {
+  id: string;
+  request_id: string | null;
+  target_role: Role;
+  title: string;
+  message: string;
+  action_type: 'new_request' | 'checked' | 'accountant_checked' | 'approved' | 'rejected' | 'paid';
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  seen_by: string[];
 };
 
 type ApprovalRequest = {
@@ -111,6 +124,8 @@ const roleLabels: Record<Role, string> = {
   auditor: 'Auditor',
   general_manager: 'General Manager',
   madam_charity: 'Madam Charity',
+  sales_manager: 'Sales Manager',
+  aftersales_manager: 'Aftersales Manager',
   staff: 'Staff',
 };
 
@@ -120,10 +135,12 @@ const roleOptions: { value: Role; label: string }[] = [
   { value: 'auditor', label: 'Auditor' },
   { value: 'general_manager', label: 'General Manager' },
   { value: 'madam_charity', label: 'Madam Charity' },
+  { value: 'sales_manager', label: 'Sales Manager' },
+  { value: 'aftersales_manager', label: 'Aftersales Manager' },
   { value: 'staff', label: 'Staff' },
 ];
 
-const departments = ['Elevator Department', 'IT Department', 'Sales Department', 'Aftersales Department', 'General Management'];
+const departments = ['Sales Department', 'Audit Department', 'Administration Department', 'Servicing Department', 'IT Department'];
 
 const pvCategoryOptions: { value: PVCategory; label: string }[] = [
   { value: 'general', label: 'General' },
@@ -151,7 +168,7 @@ const pvCategoryIcons: Record<PVCategory, typeof Fuel> = {
 
 const initialForm: RequestForm = {
   requestType: 'payment_voucher', title: '', description: '', amount: '', requesterName: '',
-  department: 'Elevator Department', recipient: '', urgency: 'normal', pvCategory: 'general',
+  department: 'Sales Department', recipient: '', urgency: 'normal', pvCategory: 'general',
   attachmentFile: null, memoTo: '', memoFrom: '', memoCc: '', memoReference: '',
 };
 
@@ -215,6 +232,7 @@ function App() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [seenRequestIds, setSeenRequestIds] = useState<Set<string>>(new Set());
   const [newRequestIds, setNewRequestIds] = useState<Set<string>>(new Set());
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [pendingAction, setPendingAction] = useState<{ request: ApprovalRequest; action: 'check' | 'accountant_check' | 'approve' | 'pay' } | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showChangePw, setShowChangePw] = useState(false);
@@ -278,7 +296,12 @@ function App() {
         });
       }
     };
+    const loadNotifications = async () => {
+      const { data: notifData } = await supabase!.from('notifications').select('*').order('created_at', { ascending: false }).limit(30);
+      if (notifData) setNotifications(notifData as Notification[]);
+    };
     void loadRequests();
+    void loadNotifications();
     const channel = supabase!.channel('approval_requests_changes')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'approval_requests' }, (payload) => {
         const newReq = payload.new as ApprovalRequest;
@@ -290,8 +313,62 @@ function App() {
         setRequests((current) => current.map((r) => r.id === updated.id ? updated : r));
       })
       .subscribe();
-    return () => { supabase!.removeChannel(channel); };
+    const notifChannel = supabase!.channel('notifications_changes')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        const newNotif = payload.new as Notification;
+        setNotifications((current) => [newNotif, ...current.filter((n) => n.id !== newNotif.id)]);
+      })
+      .subscribe();
+    return () => { supabase!.removeChannel(channel); supabase!.removeChannel(notifChannel); };
   }, [session]);
+
+  const createNotification = async (request: ApprovalRequest, action_type: 'new_request' | 'checked' | 'accountant_checked' | 'approved' | 'rejected' | 'paid') => {
+    if (!supabase || !profile) return;
+    const roleTargets: Record<string, Role[]> = {
+      new_request: ['auditor', 'md', 'general_manager', 'accountant'],
+      checked: ['accountant'],
+      accountant_checked: request.amount <= SMALL_AMOUNT_THRESHOLD ? ['general_manager', 'md'] : ['md'],
+      approved: ['accountant'],
+      rejected: ['accountant', request.requested_by ? 'staff' : 'staff'],
+      paid: ['md', 'general_manager'],
+    };
+    const actionLabels: Record<string, { title: string; message: (r: ApprovalRequest) => string }> = {
+      new_request: { title: 'New request submitted', message: (r) => `${r.request_number}: ${r.title} — ${formatMoney(r.amount)} from ${r.department}` },
+      checked: { title: 'Auditor checked', message: (r) => `${r.request_number} checked by auditor — awaiting accountant verification` },
+      accountant_checked: { title: 'Accountant verified', message: (r) => `${r.request_number} verified by accountant — awaiting ${r.amount <= SMALL_AMOUNT_THRESHOLD ? 'GM/MD' : 'MD'} approval` },
+      approved: { title: 'Request approved', message: (r) => `${r.request_number} approved — ready for payment` },
+      rejected: { title: 'Request rejected', message: (r) => `${r.request_number} has been rejected` },
+      paid: { title: 'Payment completed', message: (r) => `${r.request_number} has been marked as paid` },
+    };
+    const targets = roleTargets[action_type] ?? [];
+    const label = actionLabels[action_type];
+    for (const target_role of targets) {
+      await supabase.from('notifications').insert({
+        request_id: request.id,
+        target_role,
+        title: label.title,
+        message: label.message(request),
+        action_type,
+        created_by: profile.id,
+        created_by_name: profile.full_name,
+      });
+    }
+  };
+
+  const markNotificationSeen = async (notifId: string) => {
+    if (!supabase || !profile) return;
+    await supabase.from('notifications').update({ seen_by: [...new Set([...(notifications.find((n) => n.id === notifId)?.seen_by ?? []), profile.id])] }).eq('id', notifId);
+    setNotifications((current) => current.map((n) => n.id === notifId ? { ...n, seen_by: [...new Set([...n.seen_by, profile.id])] } : n));
+  };
+
+  const markAllNotificationsSeen = async () => {
+    if (!supabase || !profile) return;
+    const unseen = notifications.filter((n) => !n.seen_by.includes(profile.id));
+    for (const n of unseen) {
+      await supabase.from('notifications').update({ seen_by: [...new Set([...n.seen_by, profile.id])] }).eq('id', n.id);
+    }
+    setNotifications((current) => current.map((n) => ({ ...n, seen_by: [...new Set([...n.seen_by, profile.id])] })));
+  };
 
   const handleAuth = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -315,6 +392,7 @@ function App() {
     if (supabase) await supabase.auth.signOut();
     setProfile(null);
     setRequests([]);
+    setNotifications([]);
   };
 
   const handleChangePassword = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -346,8 +424,8 @@ function App() {
   const checkedCount = requests.filter((r) => r.status === 'checked').length;
   const accountantCheckedCount = requests.filter((r) => r.status === 'accountant_checked').length;
   const approvedPVs = useMemo(() => requests.filter((r) => r.request_type === 'payment_voucher' && (r.status === 'approved' || r.status === 'paid')), [requests]);
-  const notificationList = useMemo(() => requests.filter((r) => newRequestIds.has(r.id)).slice(0, 8), [requests, newRequestIds]);
-  const unseenCount = notificationList.length;
+  const dbNotificationList = useMemo(() => notifications.slice(0, 12), [notifications]);
+  const dbUnseenCount = useMemo(() => notifications.filter((n) => profile && !n.seen_by.includes(profile.id)).length, [notifications, profile]);
 
   // Reports data
   const reportRequests = useMemo(() => {
@@ -422,6 +500,9 @@ function App() {
     if (selectedRequest?.id === request.id) setSelectedRequest({ ...request, ...updates } as ApprovalRequest);
     setNotice(`${request.request_number} marked as ${statusLabel(updates.status as Status).toLowerCase()}.`);
     window.setTimeout(() => setNotice(''), 2800);
+    const updatedReq = { ...request, ...updates } as ApprovalRequest;
+    const notifAction = action === 'check' ? 'checked' : action === 'accountant_check' ? 'accountant_checked' : action === 'approve' ? 'approved' : action === 'pay' ? 'paid' : action === 'reject' ? 'rejected' : action;
+    void createNotification(updatedReq, notifAction as 'new_request' | 'checked' | 'accountant_checked' | 'approved' | 'rejected' | 'paid');
   };
 
   const createRequest = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -482,7 +563,11 @@ function App() {
     if (supabase) {
       const { data, error: insertError } = await supabase.from('approval_requests').insert(payload).select().maybeSingle();
       if (insertError) { setError('We could not save the request.'); setSaving(false); return; }
-      if (data) setRequests((current) => [data as ApprovalRequest, ...current]);
+      if (data) {
+        const newReq = data as ApprovalRequest;
+        setRequests((current) => [newReq, ...current]);
+        void createNotification(newReq, 'new_request');
+      }
     } else {
       const localReq: ApprovalRequest = {
         ...payload as Record<string, unknown>,
@@ -603,18 +688,32 @@ function App() {
           <div className="topbar-actions">
             <button className="theme-toggle-btn" onClick={toggleTheme} aria-label="Toggle theme">{theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}</button>
             <div className="dropdown-anchor" ref={notifRef}>
-              <button className={`icon-button notification ${showNotifications ? 'active' : ''}`} aria-label="Notifications" onClick={() => { setShowNotifications((v) => !v); setShowProfileMenu(false); }}><Bell size={19} />{unseenCount > 0 && <span className="notif-badge">{unseenCount}</span>}</button>
+              <button className={`icon-button notification ${showNotifications ? 'active' : ''}`} aria-label="Notifications" onClick={() => { setShowNotifications((v) => !v); setShowProfileMenu(false); }}><Bell size={19} />{dbUnseenCount > 0 && <span className="notif-badge">{dbUnseenCount}</span>}</button>
               {showNotifications && (
                 <div className="dropdown-panel notif-panel">
-                  <div className="dropdown-header"><strong>Notifications</strong>{unseenCount > 0 && <button className="text-button" onClick={() => { setNewRequestIds(new Set()); setSeenRequestIds(new Set(requests.map((r) => r.id))); }}>Mark all read</button>}</div>
-                  {notificationList.length === 0 ? (
+                  <div className="dropdown-header"><strong>Notifications</strong>{dbUnseenCount > 0 && <button className="text-button" onClick={() => void markAllNotificationsSeen()}>Mark all read</button>}</div>
+                  {dbNotificationList.length === 0 ? (
                     <div className="dropdown-empty"><CheckCircle2 size={20} /><span>You are all caught up</span></div>
-                  ) : notificationList.map((req) => (
-                    <button key={req.id} className="notif-item" onClick={() => { setSelectedRequest(req); setShowNotifications(false); setNewRequestIds((current) => { const next = new Set(current); next.delete(req.id); return next; }); }}>
-                      <span className={`request-type ${req.request_type === 'memorandum' ? 'memo' : 'voucher'}`}>{req.request_type === 'memorandum' ? <FileText size={14} /> : <WalletCards size={14} />}</span>
-                      <div><strong>{req.request_number}</strong><span>{req.title}</span><small>New request by {req.requested_by_name}</small></div>
-                    </button>
-                  ))}
+                  ) : dbNotificationList.map((notif) => {
+                    const isUnseen = profile ? !notif.seen_by.includes(profile.id) : false;
+                    const linkedReq = requests.find((r) => r.id === notif.request_id);
+                    return (
+                      <button key={notif.id} className={`notif-item ${isUnseen ? 'unseen' : ''}`} onClick={() => {
+                        if (linkedReq) setSelectedRequest(linkedReq);
+                        setShowNotifications(false);
+                        void markNotificationSeen(notif.id);
+                      }}>
+                        <span className={`notif-action-badge ${notif.action_type}`}>
+                          {notif.action_type === 'new_request' ? <Plus size={14} /> : notif.action_type === 'rejected' ? <X size={14} /> : notif.action_type === 'paid' ? <WalletCards size={14} /> : <Check size={14} />}
+                        </span>
+                        <div>
+                          <strong>{notif.title}</strong>
+                          <span>{notif.message}</span>
+                          <small>{notif.created_by_name ?? 'System'} · {formatDateTime(notif.created_at)}</small>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
