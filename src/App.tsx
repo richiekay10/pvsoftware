@@ -108,6 +108,10 @@ function formatDate(date: string) {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(date));
 }
 
+function formatDateTime(date: string) {
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(date));
+}
+
 function statusLabel(status: Status) {
   const labels: Record<Status, string> = { pending: 'Pending', checked: 'Checked', approved: 'Approved', rejected: 'Rejected', paid: 'Paid' };
   return labels[status];
@@ -471,7 +475,7 @@ function App() {
             </div>
             <div className="detail-status">
               <span className={`status-pill ${selectedRequest.status}`}>{statusLabel(selectedRequest.status)}</span>
-              <span>Submitted {formatDate(selectedRequest.created_at)}</span>
+              <span>Submitted {formatDateTime(selectedRequest.created_at)}</span>
               <span>Requested by <strong>{selectedRequest.requested_by_name}</strong></span>
             </div>
             <div className="detail-grid">
@@ -485,15 +489,15 @@ function App() {
               <span className="chain-title">Approval trail</span>
               <div className={`trail-step ${selectedRequest.checked_at ? 'done' : ''}`}>
                 <span className="trail-icon">{selectedRequest.checked_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div className="trail-content"><strong>Checked by Auditor</strong>{selectedRequest.checked_by_name ? <span>{selectedRequest.checked_by_name} · {formatDate(selectedRequest.checked_at!)}</span> : <span className="muted">Awaiting check</span>}{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Auditor signature" className="trail-signature" />}</div>
+                <div className="trail-content"><strong>Checked by Auditor</strong>{selectedRequest.checked_by_name ? <span>{selectedRequest.checked_by_name} · {formatDateTime(selectedRequest.checked_at!)}</span> : <span className="muted">Awaiting check</span>}{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Auditor signature" className="trail-signature" />}</div>
               </div>
               <div className={`trail-step ${selectedRequest.approved_at ? 'done' : selectedRequest.status === 'rejected' ? 'rejected' : ''}`}>
                 <span className="trail-icon">{selectedRequest.approved_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div className="trail-content"><strong>{selectedRequest.status === 'rejected' ? 'Rejected' : 'Approved by MD / GM'}</strong>{selectedRequest.approved_by_name ? <span>{selectedRequest.approved_by_name} · {formatDate(selectedRequest.approved_at!)}</span> : <span className="muted">Awaiting approval</span>}{selectedRequest.approved_signature && <img src={selectedRequest.approved_signature} alt="Approver signature" className="trail-signature" />}</div>
+                <div className="trail-content"><strong>{selectedRequest.status === 'rejected' ? 'Rejected' : 'Approved by MD / GM'}</strong>{selectedRequest.approved_by_name ? <span>{selectedRequest.approved_by_name} · {formatDateTime(selectedRequest.approved_at!)}</span> : <span className="muted">Awaiting approval</span>}{selectedRequest.approved_signature && <img src={selectedRequest.approved_signature} alt="Approver signature" className="trail-signature" />}</div>
               </div>
               <div className={`trail-step ${selectedRequest.paid_at ? 'done' : ''}`}>
                 <span className="trail-icon">{selectedRequest.paid_at ? <Check size={14} /> : <Clock3 size={14} />}</span>
-                <div className="trail-content"><strong>Paid by Accountant</strong>{selectedRequest.paid_by_name ? <span>{selectedRequest.paid_by_name} · {formatDate(selectedRequest.paid_at!)}</span> : <span className="muted">Awaiting payment</span>}{selectedRequest.paid_signature && <img src={selectedRequest.paid_signature} alt="Accountant signature" className="trail-signature" />}</div>
+                <div className="trail-content"><strong>Paid by Accountant</strong>{selectedRequest.paid_by_name ? <span>{selectedRequest.paid_by_name} · {formatDateTime(selectedRequest.paid_at!)}</span> : <span className="muted">Awaiting payment</span>}{selectedRequest.paid_signature && <img src={selectedRequest.paid_signature} alt="Accountant signature" className="trail-signature" />}</div>
               </div>
             </div>
 
@@ -516,7 +520,7 @@ function App() {
           <div className="print-meta">
             <div><span>Requested by</span><strong>{selectedRequest.requested_by_name}</strong></div>
             <div><span>Department</span><strong>{selectedRequest.department}</strong></div>
-            <div><span>Date</span><strong>{formatDate(selectedRequest.created_at)}</strong></div>
+            <div><span>Date &amp; time</span><strong>{formatDateTime(selectedRequest.created_at)}</strong></div>
             <div><span>Amount</span><strong>{formatMoney(selectedRequest.amount)}</strong></div>
           </div>
           <div className="print-section"><span>Details / Purpose</span><p>{selectedRequest.description}</p></div>
@@ -530,7 +534,7 @@ function App() {
             <div>Checked by: {selectedRequest.checked_by_name ?? '____________'}<div className="signature-line" />Signature / Date{selectedRequest.checked_signature && <img src={selectedRequest.checked_signature} alt="Checker signature" className="print-signature-img" />}</div>
             <div>Approved by: {selectedRequest.approved_by_name ?? '____________'}<div className="signature-line" />Signature / Date{selectedRequest.approved_signature && <img src={selectedRequest.approved_signature} alt="Approver signature" className="print-signature-img" />}</div>
           </div>
-          {selectedRequest.paid_by_name && <div className="print-paid">Paid by {selectedRequest.paid_by_name} on {formatDate(selectedRequest.paid_at!)}</div>}
+          {selectedRequest.paid_by_name && <div className="print-paid">Paid by {selectedRequest.paid_by_name} on {formatDateTime(selectedRequest.paid_at!)}</div>}
           <div className="print-footer">ALSALE · Banking Machines | Elevators | ACP · Official internal record</div>
         </div>
       )}
@@ -588,7 +592,7 @@ function RequestTable({ requests, onOpen, emptyMessage = 'No requests yet.' }: {
           <td><span className="person-name">{request.requested_by_name}</span><small className="department">{request.department}</small></td>
           <td><strong className="amount">{formatMoney(request.amount)}</strong></td>
           <td><span className={`status-pill ${request.status}`}>{statusLabel(request.status)}</span></td>
-          <td className="date-cell">{formatDate(request.created_at)}</td>
+          <td className="date-cell">{formatDateTime(request.created_at)}</td>
           <td><button className="row-menu" aria-label={`Open ${request.request_number}`} onClick={() => onOpen(request)}><ArrowUpRight size={16} /></button></td>
         </tr>
       ))}
